@@ -1,10 +1,15 @@
 """
 PawPal+ — Backend logic layer
-Classes: Owner, Pet, Task, Scheduler, DailyPlan
+Classes: Task, Pet, Owner, Scheduler, DailyPlan
 """
 
 from dataclasses import dataclass, field
 from datetime import date
+
+
+VALID_PRIORITIES = {"low", "medium", "high"}
+VALID_FREQUENCIES = {"daily", "weekly", "as-needed"}
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
 @dataclass
@@ -12,11 +17,34 @@ class Task:
     """A single pet care activity."""
     title: str
     duration_minutes: int
-    priority: str                  # "low", "medium", "high"
-    task_type: str = "general"     # e.g. "walk", "feeding", "medication", "grooming"
+    priority: str                   # "low", "medium", "high"
+    description: str = ""           # human-readable explanation of the task
+    task_type: str = "general"      # "walk", "feeding", "medication", "grooming", etc.
+    frequency: str = "daily"        # "daily", "weekly", "as-needed"
+    is_complete: bool = False
+
+    def __post_init__(self):
+        """Validate priority and frequency values after dataclass initialization."""
+        if self.priority not in VALID_PRIORITIES:
+            raise ValueError(f"priority must be one of {VALID_PRIORITIES}, got '{self.priority}'")
+        if self.frequency not in VALID_FREQUENCIES:
+            raise ValueError(f"frequency must be one of {VALID_FREQUENCIES}, got '{self.frequency}'")
+
+    def mark_complete(self) -> None:
+        """Mark this task as completed for the current day."""
+        self.is_complete = True
+
+    def reset(self) -> None:
+        """Reset completion status (e.g. at the start of a new day)."""
+        self.is_complete = False
 
     def describe(self) -> str:
-        return f"{self.title} ({self.task_type}) — {self.duration_minutes} min, priority: {self.priority}"
+        """Return a formatted one-line summary of this task including status."""
+        status = "done" if self.is_complete else "pending"
+        base = f"{self.title} ({self.task_type}) — {self.duration_minutes} min, priority: {self.priority}, frequency: {self.frequency} [{status}]"
+        if self.description:
+            base += f"\n    {self.description}"
+        return base
 
 
 @dataclass
@@ -25,13 +53,38 @@ class Pet:
     name: str
     species: str
     age: int
+    breed: str = ""
+    notes: str = ""                 # any special care notes (e.g. allergies, mobility issues)
     _tasks: list = field(default_factory=list, repr=False)
 
     def add_task(self, task: Task) -> None:
+        """Append a Task to this pet's task list."""
         self._tasks.append(task)
 
+    def remove_task(self, title: str) -> bool:
+        """Remove a task by title. Returns True if found and removed."""
+        for i, task in enumerate(self._tasks):
+            if task.title.lower() == title.lower():
+                self._tasks.pop(i)
+                return True
+        return False
+
     def get_tasks(self) -> list:
+        """Return a copy of all tasks assigned to this pet."""
         return list(self._tasks)
+
+    def get_pending_tasks(self) -> list:
+        """Return only tasks not yet marked complete."""
+        return [t for t in self._tasks if not t.is_complete]
+
+    def get_completed_tasks(self) -> list:
+        """Return only tasks that have been marked complete."""
+        return [t for t in self._tasks if t.is_complete]
+
+    def reset_all_tasks(self) -> None:
+        """Reset completion status on all tasks (call at start of each day)."""
+        for task in self._tasks:
+            task.reset()
 
 
 @dataclass
@@ -42,66 +95,106 @@ class Owner:
     _pets: list = field(default_factory=list, repr=False)
 
     def add_pet(self, pet: Pet) -> None:
+        """Add a Pet to this owner's list of pets."""
         self._pets.append(pet)
 
+    def remove_pet(self, name: str) -> bool:
+        """Remove a pet by name. Returns True if found and removed."""
+        for i, pet in enumerate(self._pets):
+            if pet.name.lower() == name.lower():
+                self._pets.pop(i)
+                return True
+        return False
+
     def get_pets(self) -> list:
+        """Return a copy of all pets belonging to this owner."""
         return list(self._pets)
 
+    def get_pet(self, name: str) -> "Pet | None":
+        """Look up a single pet by name."""
+        for pet in self._pets:
+            if pet.name.lower() == name.lower():
+                return pet
+        return None
+
     def get_available_time(self) -> int:
+        """Return the number of minutes the owner has available today."""
         return self.available_minutes_per_day
+
+    def get_all_tasks(self) -> list:
+        """Collect all tasks across all pets — bridges Owner → Pet → Task chain."""
+        tasks = []
+        for pet in self._pets:
+            tasks.extend(pet.get_tasks())
+        return tasks
+
+    def get_all_pending_tasks(self) -> list:
+        """Collect only incomplete tasks across all pets."""
+        tasks = []
+        for pet in self._pets:
+            tasks.extend(pet.get_pending_tasks())
+        return tasks
+
+    def reset_day(self) -> None:
+        """Reset all task completion statuses across all pets for a new day."""
+        for pet in self._pets:
+            pet.reset_all_tasks()
 
 
 class DailyPlan:
     """The output of the Scheduler — an ordered list of tasks for a single day."""
 
-    def __init__(self, scheduled_tasks: list[Task], plan_date: date, skipped_tasks: list[Task] = None):
+    def __init__(self, scheduled_tasks: list, plan_date: date, skipped_tasks: list = None):
         self.scheduled_tasks = scheduled_tasks
         self.date = plan_date
         self.skipped_tasks = skipped_tasks or []
         self.total_duration = sum(t.duration_minutes for t in scheduled_tasks)
 
     def display(self) -> None:
+        """Print the full daily plan including skipped tasks to stdout."""
         print(f"\n--- Daily Plan for {self.date} ---")
         for i, task in enumerate(self.scheduled_tasks, 1):
             print(f"  {i}. {task.describe()}")
-        print(f"Total time: {self.total_duration} min")
+        print(f"\nTotal time: {self.total_duration} min")
         if self.skipped_tasks:
-            print("Skipped (not enough time):")
+            print("\nSkipped (not enough time):")
             for task in self.skipped_tasks:
                 print(f"  - {task.describe()}")
 
     def get_summary(self) -> str:
+        """Return the daily plan as a formatted multi-line string for display in the UI."""
         lines = [f"Plan for {self.date} — {self.total_duration} min scheduled:"]
         for i, task in enumerate(self.scheduled_tasks, 1):
             lines.append(f"  {i}. {task.describe()}")
         if self.skipped_tasks:
-            lines.append("Skipped:")
+            lines.append("\nSkipped:")
             for task in self.skipped_tasks:
                 lines.append(f"  - {task.describe()}")
         return "\n".join(lines)
 
 
-# Priority ordering used by the scheduler
-PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
-
-
 class Scheduler:
-    """Selects and orders tasks that fit within the owner's available time."""
+    """Retrieves, organizes, and manages tasks across all pets for an owner."""
 
-    def __init__(self, owner: Owner, tasks: list[Task]):
+    def __init__(self, owner: Owner):
+        """Initialize the Scheduler with an Owner whose pets and tasks it will manage."""
         self.owner = owner
-        self.tasks = tasks
+
+    def _get_schedulable_tasks(self) -> list:
+        """Return pending tasks sorted by priority (high → medium → low)."""
+        pending = self.owner.get_all_pending_tasks()
+        return sorted(pending, key=lambda t: PRIORITY_ORDER.get(t.priority, 99))
 
     def generate_schedule(self, plan_date: date = None) -> DailyPlan:
         """
-        Sort tasks by priority (high first), then greedily select tasks
+        Sort pending tasks by priority, then greedily select tasks
         that fit within the owner's available time for the day.
         """
         if plan_date is None:
             plan_date = date.today()
 
         time_budget = self.owner.get_available_time()
-        sorted_tasks = sorted(self.tasks, key=lambda t: PRIORITY_ORDER.get(t.priority, 99))
+        sorted_tasks = self._get_schedulable_tasks()
 
         scheduled = []
         skipped = []
@@ -116,16 +209,43 @@ class Scheduler:
 
         return DailyPlan(scheduled_tasks=scheduled, plan_date=plan_date, skipped_tasks=skipped)
 
+    def mark_task_complete(self, title: str) -> bool:
+        """Mark a task complete by title across all pets. Returns True if found."""
+        for task in self.owner.get_all_tasks():
+            if task.title.lower() == title.lower():
+                task.mark_complete()
+                return True
+        return False
+
+    def get_completion_summary(self) -> str:
+        """Return a progress summary of completed vs total tasks."""
+        all_tasks = self.owner.get_all_tasks()
+        done = [t for t in all_tasks if t.is_complete]
+        lines = [
+            f"Progress for {self.owner.name}:",
+            f"  {len(done)} of {len(all_tasks)} tasks complete",
+        ]
+        if done:
+            lines.append("  Completed:")
+            for t in done:
+                lines.append(f"    - {t.title}")
+        remaining = [t for t in all_tasks if not t.is_complete]
+        if remaining:
+            lines.append("  Remaining:")
+            for t in remaining:
+                lines.append(f"    - {t.title} ({t.priority} priority)")
+        return "\n".join(lines)
+
     def explain_plan(self, plan: DailyPlan) -> str:
         """Return a human-readable explanation of why each task was included or skipped."""
         lines = [
             f"{self.owner.name} has {self.owner.get_available_time()} minutes available today.",
-            f"Tasks were sorted by priority (high → medium → low) and selected greedily.",
+            "Tasks were sorted by priority (high → medium → low) and selected greedily.",
             "",
             "Included tasks:",
         ]
         for task in plan.scheduled_tasks:
-            lines.append(f"  - {task.title}: {task.duration_minutes} min ({task.priority} priority)")
+            lines.append(f"  - {task.title}: {task.duration_minutes} min ({task.priority} priority, {task.frequency})")
 
         if plan.skipped_tasks:
             lines.append("")
