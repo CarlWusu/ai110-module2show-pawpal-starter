@@ -34,6 +34,38 @@ Beyond basic priority ordering, PawPal+ includes four algorithmic improvements:
 
 **Conflict detection** — `Scheduler.detect_conflicts(tasks)` checks whether any two timed tasks overlap (`[start, start + duration)` window comparison). It returns a list of human-readable warning strings rather than crashing, so the owner can decide how to resolve each conflict.
 
+## Testing PawPal+
+
+Run the full test suite from the project root:
+
+```bash
+python -m pytest
+```
+
+Or with verbose output to see each test name:
+
+```bash
+python -m pytest -v
+```
+
+### What the tests cover
+
+| Area | Tests |
+|---|---|
+| **Task completion** | `mark_complete()` flips status; `reset()` clears it |
+| **Recurring tasks** | Daily tasks set `next_due` to tomorrow; weekly to +7 days; as-needed gets no date |
+| **Recurrence gating** | Completed recurring tasks are excluded from today's schedule until due again |
+| **Sorting** | Tasks sort chronologically by `start_time`; no-time tasks go last; empty list is safe |
+| **Filtering** | Filter by pet name, completion status, or both; unknown pet returns empty list |
+| **Conflict detection** | Overlapping windows flagged; sequential tasks clean; same start time flagged; single task safe |
+| **Scheduling** | Time budget respected; priority ordering correct; tasks that don't fit land in skipped |
+| **Edge cases** | Pet with no tasks, zero time budget, removing nonexistent task, invalid priority/frequency/time format |
+| **Validation** | `ValueError` raised immediately on bad priority, frequency, or `start_time` |
+
+**Confidence level: ★★★★☆**
+
+The scheduler's core behaviors — priority ordering, time budgeting, recurring task suppression, and conflict detection — are all covered by explicit tests, including their key edge cases. The one gap is integration testing of the Streamlit UI layer (`app.py`), which currently has no automated tests. End-to-end UI behavior requires manual verification.
+
 ## Getting started
 
 ### Setup

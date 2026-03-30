@@ -274,3 +274,60 @@ def test_tasks_without_start_time_not_flagged():
         make_task(title="Task B"),  # no start_time
     ]
     assert scheduler.detect_conflicts(tasks) == []
+
+
+def test_exact_same_start_time_is_a_conflict():
+    """Two tasks at identical start times must be flagged."""
+    owner, scheduler = make_scheduler()
+    tasks = [
+        make_task(title="Task A", start_time="09:00", duration_minutes=20),
+        make_task(title="Task B", start_time="09:00", duration_minutes=15),
+    ]
+    warnings = scheduler.detect_conflicts(tasks)
+    assert len(warnings) == 1
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+def test_schedule_with_no_tasks_produces_empty_plan():
+    """A pet with no tasks should yield an empty schedule, not an error."""
+    owner, scheduler = make_scheduler(minutes=60)
+    owner.add_pet(make_pet(name="Empty"))
+    plan = scheduler.generate_schedule()
+    assert plan.scheduled_tasks == []
+    assert plan.skipped_tasks == []
+    assert plan.total_duration == 0
+
+
+def test_schedule_with_zero_budget_skips_all_tasks():
+    """If the owner has no time, every task should land in skipped."""
+    owner, scheduler = make_scheduler(minutes=0)
+    pet = make_pet()
+    pet.add_task(make_task(title="Any task", duration_minutes=5, priority="high"))
+    owner.add_pet(pet)
+    plan = scheduler.generate_schedule()
+    assert plan.scheduled_tasks == []
+    assert len(plan.skipped_tasks) == 1
+
+
+def test_filter_returns_empty_for_unknown_pet():
+    """Filtering by a pet name that doesn't exist should return an empty list."""
+    owner, scheduler = make_scheduler()
+    owner.add_pet(make_pet(name="Rex"))
+    results = scheduler.filter_tasks(pet_name="Nonexistent")
+    assert results == []
+
+
+def test_sort_empty_list_returns_empty():
+    """Sorting an empty task list should not raise and should return empty."""
+    _, scheduler = make_scheduler()
+    assert scheduler.sort_by_time([]) == []
+
+
+def test_detect_conflicts_single_task_no_conflict():
+    """A single timed task cannot conflict with anything."""
+    _, scheduler = make_scheduler()
+    tasks = [make_task(title="Solo", start_time="10:00", duration_minutes=30)]
+    assert scheduler.detect_conflicts(tasks) == []
