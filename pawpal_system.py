@@ -4,7 +4,7 @@ Classes: Task, Pet, Owner, Scheduler, DailyPlan
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 
 VALID_PRIORITIES = {"low", "medium", "high"}
@@ -21,30 +21,62 @@ class Task:
     description: str = ""           # human-readable explanation of the task
     task_type: str = "general"      # "walk", "feeding", "medication", "grooming", etc.
     frequency: str = "daily"        # "daily", "weekly", "as-needed"
+    start_time: str = ""            # optional scheduled start in "HH:MM" format
     is_complete: bool = False
+    next_due: date = None           # set automatically when a recurring task is completed
 
     def __post_init__(self):
-        """Validate priority and frequency values after dataclass initialization."""
+        """Validate priority, frequency, and start_time format after dataclass initialization."""
         if self.priority not in VALID_PRIORITIES:
             raise ValueError(f"priority must be one of {VALID_PRIORITIES}, got '{self.priority}'")
         if self.frequency not in VALID_FREQUENCIES:
             raise ValueError(f"frequency must be one of {VALID_FREQUENCIES}, got '{self.frequency}'")
+        if self.start_time:
+            _parse_time(self.start_time)  # raises ValueError if malformed
 
     def mark_complete(self) -> None:
-        """Mark this task as completed for the current day."""
+        """Mark this task as completed and advance next_due for recurring tasks."""
         self.is_complete = True
+        today = date.today()
+        if self.frequency == "daily":
+            self.next_due = today + timedelta(days=1)
+        elif self.frequency == "weekly":
+            self.next_due = today + timedelta(weeks=1)
+        # "as-needed" tasks get no automatic next_due
 
     def reset(self) -> None:
         """Reset completion status (e.g. at the start of a new day)."""
         self.is_complete = False
 
+    def is_due(self, on_date: date = None) -> bool:
+        """Return True if this task is due on the given date (defaults to today)."""
+        if on_date is None:
+            on_date = date.today()
+        if self.next_due is None:
+            return True
+        return self.next_due <= on_date
+
     def describe(self) -> str:
         """Return a formatted one-line summary of this task including status."""
         status = "done" if self.is_complete else "pending"
-        base = f"{self.title} ({self.task_type}) — {self.duration_minutes} min, priority: {self.priority}, frequency: {self.frequency} [{status}]"
+        time_str = f" @ {self.start_time}" if self.start_time else ""
+        base = (
+            f"{self.title} ({self.task_type}){time_str} — "
+            f"{self.duration_minutes} min, priority: {self.priority}, "
+            f"frequency: {self.frequency} [{status}]"
+        )
         if self.description:
             base += f"\n    {self.description}"
         return base
+
+
+def _parse_time(hhmm: str) -> int:
+    """Convert 'HH:MM' string to total minutes since midnight; raise ValueError if malformed."""
+    try:
+        h, m = hhmm.split(":")
+        return int(h) * 60 + int(m)
+    except (ValueError, AttributeError):
+        raise ValueError(f"start_time must be in 'HH:MM' format, got '{hhmm}'")
 
 
 @dataclass
@@ -180,16 +212,56 @@ class Scheduler:
         """Initialize the Scheduler with an Owner whose pets and tasks it will manage."""
         self.owner = owner
 
+    # ------------------------------------------------------------------
+    # Sorting
+    # ------------------------------------------------------------------
+
+    def sort_by_time(self, tasks: list) -> list:
+        """Sort a task list by start_time (HH:MM); tasks without a time go last."""
+        def sort_key(task: Task) -> int:
+            if task.start_time:
+                return _parse_time(task.start_time)
+            return 9999  # no start_time → append to end
+
+        return sorted(tasks, key=sort_key)
+
+    # ------------------------------------------------------------------
+    # Filtering
+    # ------------------------------------------------------------------
+
+    def filter_tasks(self, pet_name: str = None, status: str = None) -> list:
+        """Return tasks filtered by pet name and/or status ('pending' or 'complete').
+
+        Both filters are optional and can be combined. If neither is given,
+        all tasks across all pets are returned.
+        """
+        results = []
+        for pet in self.owner.get_pets():
+            if pet_name and pet.name.lower() != pet_name.lower():
+                continue
+            for task in pet.get_tasks():
+                if status == "pending" and task.is_complete:
+                    continue
+                if status == "complete" and not task.is_complete:
+                    continue
+                results.append((pet.name, task))
+        return results
+
+    # ------------------------------------------------------------------
+    # Scheduling
+    # ------------------------------------------------------------------
+
     def _get_schedulable_tasks(self) -> list:
-        """Return pending tasks sorted by priority (high → medium → low)."""
-        pending = self.owner.get_all_pending_tasks()
+        """Return pending, due tasks sorted by priority (high → medium → low)."""
+        today = date.today()
+        pending = [
+            t for t in self.owner.get_all_pending_tasks()
+            if t.is_due(today)
+        ]
         return sorted(pending, key=lambda t: PRIORITY_ORDER.get(t.priority, 99))
 
     def generate_schedule(self, plan_date: date = None) -> DailyPlan:
-        """
-        Sort pending tasks by priority, then greedily select tasks
-        that fit within the owner's available time for the day.
-        """
+        """Sort due pending tasks by priority, greedily select those that fit the time budget."""
         if plan_date is None:
             plan_date = date.today()
 
@@ -209,8 +281,12 @@ class Scheduler:
 
         return DailyPlan(scheduled_tasks=scheduled, plan_date=plan_date, skipped_tasks=skipped)
 
+    # ------------------------------------------------------------------
+    # Completion
+    # ------------------------------------------------------------------
+
     def mark_task_complete(self, title: str) -> bool:
-        """Mark a task complete by title across all pets. Returns True if found."""
+        """Mark a task complete by title; advances next_due for recurring tasks. Returns True if found."""
         for task in self.owner.get_all_tasks():
             if task.title.lower() == title.lower():
                 task.mark_complete()
@@ -228,13 +304,48 @@ class Scheduler:
         if done:
             lines.append("  Completed:")
             for t in done:
-                lines.append(f"    - {t.title}")
+                next_str = f" (next due: {t.next_due})" if t.next_due else ""
+                lines.append(f"    - {t.title}{next_str}")
         remaining = [t for t in all_tasks if not t.is_complete]
         if remaining:
             lines.append("  Remaining:")
             for t in remaining:
                 lines.append(f"    - {t.title} ({t.priority} priority)")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Conflict detection
+    # ------------------------------------------------------------------
+
+    def detect_conflicts(self, tasks: list) -> list:
+        """Check a list of tasks for time overlaps; return warning strings for each conflict found.
+
+        Only tasks with a start_time set are evaluated. Two tasks conflict when
+        their time windows [start, start + duration) overlap. Returns an empty
+        list if no conflicts are found.
+        """
+        timed = [(t, _parse_time(t.start_time)) for t in tasks if t.start_time]
+        warnings = []
+
+        for i in range(len(timed)):
+            for j in range(i + 1, len(timed)):
+                task_a, start_a = timed[i]
+                task_b, start_b = timed[j]
+                end_a = start_a + task_a.duration_minutes
+                end_b = start_b + task_b.duration_minutes
+                # Overlap when one window starts before the other ends
+                if start_a < end_b and start_b < end_a:
+                    warnings.append(
+                        f"CONFLICT: '{task_a.title}' ({task_a.start_time}, "
+                        f"{task_a.duration_minutes} min) overlaps with "
+                        f"'{task_b.title}' ({task_b.start_time}, {task_b.duration_minutes} min)"
+                    )
+
+        return warnings
+
+    # ------------------------------------------------------------------
+    # Explanation
+    # ------------------------------------------------------------------
 
     def explain_plan(self, plan: DailyPlan) -> str:
         """Return a human-readable explanation of why each task was included or skipped."""
@@ -245,7 +356,11 @@ class Scheduler:
             "Included tasks:",
         ]
         for task in plan.scheduled_tasks:
-            lines.append(f"  - {task.title}: {task.duration_minutes} min ({task.priority} priority, {task.frequency})")
+            time_str = f" @ {task.start_time}" if task.start_time else ""
+            lines.append(
+                f"  - {task.title}{time_str}: {task.duration_minutes} min "
+                f"({task.priority} priority, {task.frequency})"
+            )
 
         if plan.skipped_tasks:
             lines.append("")

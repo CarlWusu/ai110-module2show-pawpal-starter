@@ -140,13 +140,19 @@ The review also flagged that the greedy scheduler can skip a high-priority task 
 
 **a. Constraints and priorities**
 
-- What constraints does your scheduler consider (for example: time, priority, preferences)?
-- How did you decide which constraints mattered most?
+The scheduler considers two constraints: **available time** (the owner's daily time budget in minutes) and **task priority** (high / medium / low). Tasks are sorted by priority first, then selected greedily until the time budget is exhausted. A task's `frequency` ("daily", "weekly", "as-needed") is also respected — tasks are only scheduled if their `next_due` date is today or earlier, so completed recurring tasks are automatically suppressed until their next occurrence.
+
+Priority was treated as the most important constraint because missing a high-priority task (e.g., medication) is more harmful than running out of time for a low-priority one (e.g., grooming). Time is a hard constraint: no task is scheduled that would push the total over the owner's stated budget.
 
 **b. Tradeoffs**
 
-- Describe one tradeoff your scheduler makes.
-- Why is that tradeoff reasonable for this scenario?
+**Tradeoff: conflict detection warns but does not re-schedule.**
+
+The `detect_conflicts()` method identifies overlapping tasks by comparing each pair's time windows (`[start, start + duration)`). When a conflict is found, it returns a warning string — it does not move, drop, or reorder the conflicting tasks. This means the final schedule can still contain overlapping items; the owner is informed and must resolve it manually.
+
+This tradeoff is reasonable for this scenario for two reasons. First, automatically resolving conflicts (e.g., bumping a task to a later slot) requires knowing the owner's full day calendar, which the app does not have. A wrong auto-reschedule (e.g., moving medication to the evening) could be worse than the conflict itself. Second, a warning gives the owner agency — they may decide one task can be done by a second person, or that the overlap is acceptable (e.g., a quick feeding while a walk is being prepared). Crashing or silently dropping tasks would be worse than surfacing the issue and letting the owner decide.
+
+A secondary tradeoff is that the greedy algorithm can skip a high-priority task whose duration is too long, even if removing a lower-priority task would have freed enough room. This keeps the algorithm simple and predictable (O(n log n) sort + O(n) scan) at the cost of occasionally sub-optimal selections.
 
 ---
 
