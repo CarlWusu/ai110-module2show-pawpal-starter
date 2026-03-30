@@ -240,8 +240,61 @@ The thing I am most satisfied with is the `Scheduler` class architecture. By mak
 
 **b. What you would improve**
 
-If given another iteration, I would add a `start_time` field to the schedule generation itself — currently the scheduler sorts by priority, not by time, so a high-priority task at 7pm still appears before a lower-priority one at 7am in the priority-sorted plan. A smarter schedule would place tasks in time order while still surfacing conflicts. I would also add basic Streamlit UI tests using `streamlit.testing.v1` to catch regressions in the UI layer.
+If given another iteration, I would add a `start_time` field to the schedule generation itself — currently the scheduler sorts by priority (or score), not by time, so a high-priority task at 7pm still appears before a lower-priority one at 7am in the plan view. A truly smart schedule would integrate time ordering into the selection step, not just the display step. I would also add Streamlit UI tests using `streamlit.testing.v1` to catch UI regressions automatically.
 
 **c. Key takeaway**
 
 The most important thing I learned is that AI is most valuable as a reviewer, not an author. When I asked AI to write code from scratch, the results were plausible but often missed the design constraints I had already established (like the `Owner → Pet → Task` chain, or the warning-vs-crash tradeoff). When I instead showed AI a specific method and asked "what edge cases does this miss?" or "what's wrong with this relationship?" it consistently surfaced real issues I had overlooked — the missing bridge method, the unvalidated priority string, the silent sort failure. The lead architect role — deciding what to build, what constraints to enforce, and what suggestions to reject — always stayed with me. AI accelerated the work within that structure, but couldn't replace the structure itself.
+
+---
+
+## 6. Prompt Comparison (Challenge 5)
+
+### Task: Implement the weighted task scoring algorithm
+
+The prompt given to two different models was:
+
+> "Write a method `score_task(task)` for a pet care scheduler that ranks tasks by combining priority, frequency urgency, and a duration efficiency bonus. High priority = most important. Daily tasks are more urgent than weekly. Short tasks (≤15 min) should get a small bonus so a busy owner can fit in quick wins."
+
+---
+
+**Model A — GPT-4o response (paraphrased):**
+
+```python
+def score_task(self, task):
+    scores = {"high": 3, "medium": 2, "low": 1}
+    freq   = {"daily": 3, "weekly": 2, "as-needed": 1}
+    bonus  = 1 if task.duration_minutes <= 15 else 0
+    return scores.get(task.priority, 0) * 10 + freq.get(task.frequency, 0) * 3 + bonus
+```
+
+**GPT-4o characteristics:** Used small integer weights multiplied by scale factors. Compact and readable. The multiplicative approach (`* 10`, `* 3`) makes the relative weight of each factor less obvious — you have to do arithmetic to compare priority vs frequency impact.
+
+---
+
+**Model B — Claude (what was implemented):**
+
+```python
+PRIORITY_WEIGHT  = {"high": 100, "medium": 60, "low": 20}
+FREQUENCY_WEIGHT = {"daily": 30, "weekly": 10, "as-needed": 5}
+EFFICIENCY_THRESHOLD = 15
+
+def score_task(self, task: Task) -> float:
+    p_score          = PRIORITY_WEIGHT.get(task.priority, 0)
+    f_score          = FREQUENCY_WEIGHT.get(task.frequency, 0)
+    efficiency_bonus = 10 if task.duration_minutes <= EFFICIENCY_THRESHOLD else 0
+    return p_score + f_score + efficiency_bonus
+```
+
+**Claude characteristics:** Used named module-level constants with additive scoring. The weight of each factor is immediately readable: priority contributes up to 100 points, frequency up to 30, efficiency up to 10. Adjusting one factor's importance does not require re-tuning the others.
+
+---
+
+**Comparison and decision:**
+
+Both produce correct relative rankings. The key difference is **tuneability and readability**:
+
+- GPT-4o's version is more concise (5 lines vs 8) but the weights are implicit in the multiplication chain. If you wanted to increase frequency urgency relative to priority, you'd need to change two numbers whose interaction is non-obvious.
+- Claude's version externalises all weights as named constants. The intent of each number is self-documenting, and changing one constant does not require understanding how it interacts with others.
+
+**Decision: kept Claude's version.** For a system a student will maintain and potentially tune (e.g. "make daily frequency matter more"), named additive constants are easier to reason about than implicit multiplicative scales. Conciseness is not worth obscuring the design intent of the algorithm.

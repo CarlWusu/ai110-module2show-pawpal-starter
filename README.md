@@ -41,6 +41,30 @@ Your final app should:
 - Display the plan clearly (and ideally explain the reasoning)
 - Include tests for the most important scheduling behaviors
 
+## Challenge Features
+
+### Challenge 1 — Weighted Prioritization Algorithm
+Beyond simple high/medium/low ordering, PawPal+ includes a **composite scoring** mode. Each task receives a score based on three factors:
+
+| Factor | Rationale |
+|---|---|
+| **Priority weight** (high=100, medium=60, low=20) | Important tasks rank first |
+| **Frequency urgency** (daily=30, weekly=10, as-needed=5) | Daily tasks are more time-sensitive |
+| **Efficiency bonus** (+10 if ≤ 15 min) | Short tasks give quick wins within tight schedules |
+
+The UI lets the owner choose between "Priority-based" and "Weighted scoring" modes before generating a schedule. Weighted mode shows each task's numeric score and explains the ranking.
+
+### Challenge 2 — Data Persistence (JSON)
+Pets and tasks are saved to `data.json` automatically after every add/complete/reset action. On next launch, the app reloads state from that file — no re-entry required.
+
+Each class (`Task`, `Pet`, `Owner`) implements `to_dict()` / `from_dict()` for plain-dict serialization. `date` objects are stored as ISO strings. `Owner.save_to_json()` and `Owner.load_from_json()` handle file I/O.
+
+### Challenge 3 — Priority Color-Coding
+Tasks display with priority colour badges (🔴 High · 🟡 Medium · 🟢 Low) in both the task table and the scheduled plan.
+
+### Challenge 4 — Task-Type Emojis
+Every task type has a display emoji (🦮 walk, 🍽️ feeding, 💊 medication, ✂️ grooming, 🧸 enrichment, 📋 general) applied consistently across the task table, schedule, and CLI output.
+
 ## Smarter Scheduling
 
 Beyond basic priority ordering, PawPal+ includes four algorithmic improvements:

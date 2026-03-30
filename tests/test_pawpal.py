@@ -331,3 +331,97 @@ def test_detect_conflicts_single_task_no_conflict():
     _, scheduler = make_scheduler()
     tasks = [make_task(title="Solo", start_time="10:00", duration_minutes=30)]
     assert scheduler.detect_conflicts(tasks) == []
+
+
+# ---------------------------------------------------------------------------
+# Challenge 1: Weighted scoring
+# ---------------------------------------------------------------------------
+
+def test_score_task_high_daily_scores_above_low_weekly():
+    _, scheduler = make_scheduler()
+    high_daily  = make_task(priority="high", frequency="daily")
+    low_weekly  = make_task(priority="low",  frequency="weekly")
+    assert scheduler.score_task(high_daily) > scheduler.score_task(low_weekly)
+
+
+def test_score_task_efficiency_bonus_for_short_tasks():
+    _, scheduler = make_scheduler()
+    short = make_task(priority="medium", frequency="daily", duration_minutes=10)
+    long  = make_task(priority="medium", frequency="daily", duration_minutes=60)
+    assert scheduler.score_task(short) > scheduler.score_task(long)
+
+
+def test_weighted_schedule_respects_time_budget():
+    owner, scheduler = make_scheduler(minutes=30)
+    pet = make_pet()
+    pet.add_task(make_task(title="A", duration_minutes=20, priority="high",   frequency="daily"))
+    pet.add_task(make_task(title="B", duration_minutes=20, priority="medium", frequency="daily"))
+    owner.add_pet(pet)
+    plan = scheduler.generate_weighted_schedule()
+    assert plan.total_duration <= 30
+
+
+def test_weighted_schedule_prefers_daily_over_weekly_same_priority():
+    """A daily medium task should outscore a weekly medium task."""
+    owner, scheduler = make_scheduler(minutes=60)
+    pet = make_pet()
+    daily  = make_task(title="Daily",  priority="medium", frequency="daily",  duration_minutes=10)
+    weekly = make_task(title="Weekly", priority="medium", frequency="weekly", duration_minutes=10)
+    pet.add_task(weekly)
+    pet.add_task(daily)
+    owner.add_pet(pet)
+    plan = scheduler.generate_weighted_schedule()
+    titles = [t.title for t in plan.scheduled_tasks]
+    assert titles.index("Daily") < titles.index("Weekly")
+
+
+# ---------------------------------------------------------------------------
+# Challenge 2: JSON persistence
+# ---------------------------------------------------------------------------
+
+import json, tempfile, os
+from datetime import date
+
+
+def test_task_round_trips_through_dict():
+    t = make_task(title="Walk", priority="high", frequency="daily", start_time="07:00")
+    t.mark_complete()
+    restored = Task.from_dict(t.to_dict())
+    assert restored.title        == t.title
+    assert restored.is_complete  == t.is_complete
+    assert restored.next_due     == t.next_due
+
+
+def test_pet_round_trips_through_dict():
+    pet = make_pet(name="Rex")
+    pet.add_task(make_task(title="Feed", priority="high"))
+    restored = Pet.from_dict(pet.to_dict())
+    assert restored.name == "Rex"
+    assert len(restored.get_tasks()) == 1
+    assert restored.get_tasks()[0].title == "Feed"
+
+
+def test_owner_saves_and_loads_from_json():
+    owner = Owner(name="Sam", available_minutes_per_day=60)
+    pet   = make_pet(name="Buddy")
+    pet.add_task(make_task(title="Walk", priority="high", frequency="daily"))
+    owner.add_pet(pet)
+
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+        path = f.name
+    try:
+        owner.save_to_json(path)
+        loaded = Owner.load_from_json(path)
+        assert loaded.name == "Sam"
+        assert loaded.available_minutes_per_day == 60
+        assert len(loaded.get_pets()) == 1
+        assert loaded.get_pets()[0].name == "Buddy"
+        assert len(loaded.get_all_tasks()) == 1
+        assert loaded.get_all_tasks()[0].title == "Walk"
+    finally:
+        os.unlink(path)
+
+
+def test_load_from_missing_file_raises():
+    with pytest.raises(FileNotFoundError):
+        Owner.load_from_json("/tmp/does_not_exist_pawpal.json")
