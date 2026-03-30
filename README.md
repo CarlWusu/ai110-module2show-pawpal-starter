@@ -1,6 +1,25 @@
 # PawPal+ (Module 2 Project)
 
-You are building **PawPal+**, a Streamlit app that helps a pet owner plan care tasks for their pet.
+**PawPal+** is a Streamlit app that helps a busy pet owner plan, prioritise, and track daily care tasks across multiple pets.
+
+## Features
+
+- **Owner & pet setup** — Enter your name, daily time budget, and one or more pets (name, species, age, breed).
+- **Task management** — Add care tasks with title, duration, priority (high / medium / low), type, frequency, optional start time, and description. Assign each task to a specific pet.
+- **Priority-based scheduling** — Tasks are sorted high → medium → low, then selected greedily to fit within the owner's available time. Tasks that don't fit are listed as skipped with an explanation.
+- **Sort by time** — The schedule and task table are displayed in chronological order by `start_time` (HH:MM). Tasks without a time appear last.
+- **Filter by pet or status** — The task table can be filtered by pet name and/or completion status (pending / complete) using dropdown controls.
+- **Recurring tasks** — Marking a `daily` or `weekly` task complete automatically advances its `next_due` date (tomorrow or +7 days). The scheduler suppresses that task until it is due again.
+- **Conflict detection** — If two scheduled tasks have overlapping time windows, a warning banner appears above the plan with a detailed breakdown of each conflict. The schedule is not blocked — the owner decides how to resolve it.
+- **Completion tracking** — Mark tasks done from a dropdown; a progress bar and summary show how many of the day's tasks are complete. Recurring tasks display their next due date on completion.
+- **Plan reasoning** — An expandable "How was this plan built?" section explains exactly why each task was included or skipped.
+- **Reset day** — One button clears all completion statuses and the current plan so a fresh day can begin.
+
+## 📸 Demo
+
+<a href="/course_images/ai110/pawpal_screenshot.png" target="_blank">
+  <img src='/course_images/ai110/pawpal_screenshot.png' title='PawPal App' width='' alt='PawPal App' class='center-block' />
+</a>
 
 ## Scenario
 

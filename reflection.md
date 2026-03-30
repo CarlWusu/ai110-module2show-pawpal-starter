@@ -53,42 +53,67 @@ My initial design identified five classes, each with a single, clear responsibil
 - Methods: `display()`, `get_summary()`
 - Responsibility: Holds the output of the scheduler — the ordered list of tasks for the day and metadata for display in the UI.
 
-**b. UML Class Diagram (Mermaid.js)**
+**b. UML Class Diagram — Final (updated to match implementation)**
 
 ```mermaid
 classDiagram
-    class Owner {
-        +String name
-        +int available_minutes_per_day
-        +add_pet(pet: Pet)
-        +get_available_time() int
+    class Task {
+        +String title
+        +int duration_minutes
+        +String priority
+        +String description
+        +String task_type
+        +String frequency
+        +String start_time
+        +bool is_complete
+        +date next_due
+        +mark_complete()
+        +reset()
+        +is_due(on_date) bool
+        +describe() str
     }
 
     class Pet {
         +String name
         +String species
         +int age
+        +String breed
+        +String notes
+        +add_task(task)
+        +remove_task(title) bool
         +get_tasks() list
+        +get_pending_tasks() list
+        +get_completed_tasks() list
+        +reset_all_tasks()
     }
 
-    class Task {
-        +String title
-        +int duration_minutes
-        +String priority
-        +String task_type
-        +describe() str
+    class Owner {
+        +String name
+        +int available_minutes_per_day
+        +add_pet(pet)
+        +remove_pet(name) bool
+        +get_pets() list
+        +get_pet(name) Pet
+        +get_available_time() int
+        +get_all_tasks() list
+        +get_all_pending_tasks() list
+        +reset_day()
     }
 
     class Scheduler {
         +Owner owner
-        +list tasks
-        +dict constraints
-        +generate_schedule() DailyPlan
-        +explain_plan() str
+        +generate_schedule(plan_date) DailyPlan
+        +sort_by_time(tasks) list
+        +filter_tasks(pet_name, status) list
+        +mark_task_complete(title) bool
+        +detect_conflicts(tasks) list
+        +get_completion_summary() str
+        +explain_plan(plan) str
     }
 
     class DailyPlan {
         +list scheduled_tasks
+        +list skipped_tasks
         +date date
         +int total_duration
         +display()
@@ -97,16 +122,20 @@ classDiagram
 
     Owner "1" --> "1..*" Pet : owns
     Pet "1" --> "0..*" Task : has
-    Scheduler --> Owner : uses
-    Scheduler --> Task : selects from
+    Owner --> Task : aggregates via get_all_tasks()
+    Scheduler --> Owner : reads time budget and pets
     Scheduler --> DailyPlan : produces
+    DailyPlan --> Task : contains
 ```
 
-**Design notes:**
-- `Owner` owns one or more `Pet` objects (1 to many)
-- Each `Pet` has zero or more associated `Task` objects
-- `Scheduler` takes the owner (for time constraints) and all tasks as input, then produces a `DailyPlan`
-- `DailyPlan` is a pure output object — it holds results for display and does not feed back into the scheduler
+**What changed from the initial diagram:**
+- `Task` gained `start_time`, `next_due`, `frequency`, `description`, `is_complete`, `is_due()`, and `mark_complete()`
+- `Pet` gained `breed`, `notes`, `remove_task()`, `get_pending_tasks()`, `get_completed_tasks()`, `reset_all_tasks()`
+- `Owner` gained `remove_pet()`, `get_pet()`, `get_all_pending_tasks()`, `reset_day()`, and the bridge method `get_all_tasks()`
+- `Scheduler` no longer takes a task list — it pulls tasks through the owner. New methods: `sort_by_time()`, `filter_tasks()`, `detect_conflicts()`, `mark_task_complete()`, `get_completion_summary()`
+- `DailyPlan` now explicitly holds `skipped_tasks`
+- Added `Owner --> Task` aggregation arrow to show the bridge relationship
+- Added `DailyPlan --> Task` containment arrow
 
 **c. Design changes**
 
@@ -160,13 +189,20 @@ A secondary tradeoff is that the greedy algorithm can skip a high-priority task 
 
 **a. How you used AI**
 
-- How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
-- What kinds of prompts or questions were most helpful?
+AI was used at every phase, but for different kinds of work at each stage:
+
+- **Design brainstorming (Phase 1):** Used AI to identify missing relationships in the initial UML — specifically, it flagged that the `Owner → Pet → Task` chain existed on paper but nothing in the code actually traversed it. This led to adding `Owner.get_all_tasks()` as a bridge method.
+- **Logic review (Phase 2):** Asked AI to review the skeleton for bottlenecks. It caught that `priority` was an unvalidated free-form string, which could silently corrupt sort order. Added `__post_init__` validation as a result.
+- **Algorithm suggestions (Phase 3):** Used AI to suggest approaches for conflict detection (pairwise window overlap), recurring task scheduling (timedelta), and sort key design (lambda with a sentinel value for missing times).
+- **Test planning:** Asked AI for edge cases to test — it suggested "pet with no tasks," "zero time budget," "exact same start time," and "empty task list to sort," all of which were added.
+
+The most effective prompts were specific and grounded in code: "given this method signature, what edge cases should I test?" worked far better than "write tests for my scheduler."
 
 **b. Judgment and verification**
 
-- Describe one moment where you did not accept an AI suggestion as-is.
-- How did you evaluate or verify what the AI suggested?
+The most important moment of pushback was on the conflict detection algorithm. AI initially suggested raising an exception when a conflict was found — crashing the schedule generation. I rejected this because it would make the app unusable any time a pet owner accidentally assigned overlapping tasks (which is common). Instead I kept conflict detection as a separate method that returns warnings, leaving the schedule intact and letting the owner decide how to resolve conflicts. I verified this decision by manually testing the scenario in `main.py` and confirming the schedule still printed while warnings appeared separately.
+
+A second rejection: AI suggested using a dict mapping `pet_name → task_list` as the internal structure for `Owner`. This would have made `filter_tasks()` slightly simpler, but it would have broken the clean `Owner → Pet → Task` chain from the UML, and made it harder to attach pet metadata (breed, notes) to the right object. I kept the `list[Pet]` structure and verified that filtering still worked correctly with the existing `filter_tasks()` method.
 
 ---
 
@@ -174,13 +210,25 @@ A secondary tradeoff is that the greedy algorithm can skip a high-priority task 
 
 **a. What you tested**
 
-- What behaviors did you test?
-- Why were these tests important?
+The test suite covers 31 behaviors across six areas:
+
+1. **Task completion lifecycle** — `mark_complete()` sets `is_complete`; `reset()` clears it; `next_due` is set correctly for daily and weekly tasks; as-needed tasks get no `next_due`.
+2. **Recurrence gating** — A completed recurring task is excluded from today's schedule when `next_due` is in the future, and included again when it is due.
+3. **Sorting** — Tasks sort chronologically by `start_time`; tasks without a time land at the end; empty list is safe.
+4. **Filtering** — Filter by pet name returns only that pet's tasks; filter by status excludes completed or pending correctly; unknown pet returns empty list.
+5. **Conflict detection** — Overlapping time windows are flagged; sequential tasks are not; exact same start time is flagged; tasks without a `start_time` are ignored; single task cannot conflict with itself.
+6. **Edge cases** — Pet with no tasks produces empty plan; zero time budget skips all tasks; invalid priority/frequency/start_time format raises `ValueError` immediately.
+
+These tests matter because they verify the three behaviors a pet owner relies on most: that high-priority tasks appear first, that recurring tasks don't pile up after completion, and that time conflicts surface as warnings rather than silent failures.
 
 **b. Confidence**
 
-- How confident are you that your scheduler works correctly?
-- What edge cases would you test next if you had more time?
+**★★★★☆ (4/5)**
+
+The scheduling logic, recurrence system, sorting, filtering, and conflict detection are all directly tested, including their key edge cases. The main gap is the Streamlit UI layer — `app.py` has no automated tests. UI correctness (does the conflict warning render? does the progress bar update?) requires manual testing. If given more time, I would add tests for:
+- A task with `next_due` exactly equal to today (boundary case for `is_due()`)
+- Multiple pets, same task title — does `mark_task_complete()` find the right one?
+- Schedule generated with a mix of timed and untimed tasks (does sort not break the plan order?)
 
 ---
 
@@ -188,12 +236,12 @@ A secondary tradeoff is that the greedy algorithm can skip a high-priority task 
 
 **a. What went well**
 
-- What part of this project are you most satisfied with?
+The thing I am most satisfied with is the `Scheduler` class architecture. By making `Scheduler` pull tasks from the `Owner` (rather than accepting a flat list), the relationship between classes became real in the code — not just on the diagram. This made the Streamlit UI clean: `Scheduler(owner)` is all you need to construct it, and every method works from there. The decision to keep `detect_conflicts()` as a warning-only method (rather than auto-resolving or crashing) also turned out well — it gives the owner information without taking control away from them.
 
 **b. What you would improve**
 
-- If you had another iteration, what would you improve or redesign?
+If given another iteration, I would add a `start_time` field to the schedule generation itself — currently the scheduler sorts by priority, not by time, so a high-priority task at 7pm still appears before a lower-priority one at 7am in the priority-sorted plan. A smarter schedule would place tasks in time order while still surfacing conflicts. I would also add basic Streamlit UI tests using `streamlit.testing.v1` to catch regressions in the UI layer.
 
 **c. Key takeaway**
 
-- What is one important thing you learned about designing systems or working with AI on this project?
+The most important thing I learned is that AI is most valuable as a reviewer, not an author. When I asked AI to write code from scratch, the results were plausible but often missed the design constraints I had already established (like the `Owner → Pet → Task` chain, or the warning-vs-crash tradeoff). When I instead showed AI a specific method and asked "what edge cases does this miss?" or "what's wrong with this relationship?" it consistently surfaced real issues I had overlooked — the missing bridge method, the unvalidated priority string, the silent sort failure. The lead architect role — deciding what to build, what constraints to enforce, and what suggestions to reject — always stayed with me. AI accelerated the work within that structure, but couldn't replace the structure itself.
